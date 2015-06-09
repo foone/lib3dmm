@@ -1,13 +1,12 @@
-#!/usr/env python
-#md2_to_vxp: Converts Quake 2 MD2 files to v3dmm expansions (VXPs)
-#Copyright (C) 2004 Foone Turing
+#!/usr/bin/python
+#lib3dmm: Parses and writes 3D Movie Maker datafiles
+#Copyright (C) 2004-2015 Foone Turing
 #
 #This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
 #
 #This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 #
 #You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
-
 
 from struct import unpack,calcsize,pack
 from error import LoadError,SaveError
@@ -21,73 +20,36 @@ def sread(file,struct):
 		return res[0]
 	else:
 		return res
-def refcmp(a, b):
-	f=cmp(a[0], b[0])
-	if f==0:
-		s=cmp(a[1].type,b[1].type)
-		if s==0:
-			return cmp(a[1].id,b[1].id)
-		else: 
-			return s
-	else:
-		return f
-class BaseQuad:
-	def __init__(self,type,id):
+
+class Quad:
+	MAIN_QUAD_FLAG = 2
+	COMPRESSED_FLAG = 4
+	def __init__(self,type,id=0,mode=0,string=0):
 		self.type=type
 		self.id=id
-	def setID(self,id):
-		self.id=id
-	def setType(self,type):
-		self.type=type
-	def isFake(self):
-		return False # Maybe?
-class FakeQuad(BaseQuad):
-	def __init__(self,type,id):
-		BaseQuad.__init__(self,type,id)
-	def isFake(self):
-		return True
-class Quad(BaseQuad):
-	def __init__(self,type,id=0,mode=0,string=None):
-		BaseQuad.__init__(self,type,id)
 		self.string=string
 		self.mode=mode
 		self.source=MemorySource('')
 		self.references=[]
 	def setData(self,string):
 		self.source=MemorySource(string)
-	def setMode(self,mode):
-		self.mode=mode
-	def setDataFromFile(self,file):
-		self.source=MemorySource(open(file,'rb').read())
-	def setSource(self,source):
-		self.source=source
-	def setString(self,string):
-		if len(string)>255:
-			raise SaveError('String too long!')
-		self.string=string
 	def addReference(self,otherquad,refid):
 		self.references.append((refid,otherquad))
-	def addFakeReference(self,type,id,refid):
-		self.references.append((refid,FakeQuad(type,id)))
-	def sortReferences(self):
-		self.references.sort(refcmp)
 	def getLength(self):
 		return self.source.get_length()
 	def write(self,fop):
 		self.source.write(fop)
 	def getNumReferences(self):
 		return len(self.references)
-	def isFake(self):
-		return False
-	def makeMemorySource(self):
-		self.source=self.source.make_memory_source()
+	def isCompressed(self):
+		return bool(self.mode&Quad.COMPRESSED_FLAG)
+
 class c3dmmFileOut:
 	def __init__(self):
 		self.quads=[]
 		self.sig='CHMP'
 		self.unks=(5,4)
 		self.magic=(1,0,3,3)
-		self.should_sort=True
 	def addQuad(self,quad):
 		self.quads.append(quad)
 	def getData(self):
@@ -101,15 +63,19 @@ class c3dmmFileOut:
 	def saveToFile(self,fop):
 		offset=128
 		quadaddys=[]
-		self.unfakeQuads()
-		if self.should_sort:
-			sortedquads=self.makeSortedQuads()
-		else:
-			sortedquads=self.quads
+		sortedquads=self.makeSortedQuads()
 		for quad in sortedquads:
 			length=quad.getLength()
 			quadaddys.append((offset,quad,length))
 			offset+=length
+		print '---'
+		for quad in sortedquads:
+			print quad.type
+		print '+++'
+		for off,quad,length in quadaddys:
+			print off,quad.type,length
+		print '---',offset
+
 		indexoffset=offset
 		index=self.makeIndex(quadaddys)
 		indexlength=len(index)
@@ -119,14 +85,6 @@ class c3dmmFileOut:
 		for quad in sortedquads:
 			quad.write(fop)
 		fop.write(index)
-	def unfakeQuads(self):
-		for quad in self.quads:
-			for i,(refid,refquad) in enumerate(quad.references):
-				if refquad.isFake():
-					otherquad=self.find_quad(refquad.type,refquad.id)
-					if otherquad is None:
-						raise SaveError('Couldn\'t find quad: [%s:%i]' % (refquad.type,refquad.id))
-					quad.references[i]=(refid,otherquad)
 	def makeHeader(self,length,indexoffset,indexlength):
 		header=pack('<8s 2H 4B 4L 96s', 'CHN2' + self.sig[::-1],self.unks[0],self.unks[1],self.magic[0],self.magic[1],self.magic[2],self.magic[3],length,indexoffset,indexlength,length,'')
 		return header
@@ -139,21 +97,20 @@ class c3dmmFileOut:
 			found=False
 			for offset,quad,length in quadaddys:
 				if not found and quad is rquad:
-					qe,qelen=self.makeQuadEntry(offset,quad)
-					quadent=(quadslength,qe,qelen)
-					quadentries.append(quadent)
-					quadmap[(quad.type,quad.id)]=quadent
+					qe=self.makeQuadEntry(offset,quad)
+					quadentries.append((quadslength,qe))
+					quadmap[(quad.type,quad.id)]=(quadslength,qe)
 					quadslength+=len(qe)
 					found=True
 			if not found:
 				raise SaveError('missing quad!')
 		index+=pack('<4B 2L 2l',self.magic[0],self.magic[1],self.magic[2],self.magic[3],len(self.quads),quadslength,-1,20)
 		postindex=''
-		for offset,quadentry,quadlen in quadentries:
+		for offset,quadentry in quadentries:
 			index+=quadentry
 		for off,quad,length in quadaddys:
-			offset,quadentry,quadlen=quadmap[(quad.type,quad.id)]
-			postindex+=pack('<2L',offset,quadlen)
+			offset,quadentry=quadmap[(quad.type,quad.id)]
+			postindex+=pack('<2L',offset,len(quadentry))
 		index+=postindex
 		return index
 	def makeQuadEntry(self,offset,quad):
@@ -161,23 +118,8 @@ class c3dmmFileOut:
 		qe+=pack('<L',quad.getLength())[0:3] # 24 bit numbers ROCK MY COCK OFF
 		qe+=pack('<2H',quad.getNumReferences(),self.getReferenceCount(quad))
 		for refid,oquad in quad.references:
-			#print '[%s:%i]' % (oquad.type,oquad.id)
 			qe+=pack('<4s 2L',oquad.type[::-1],oquad.id,refid)
-		exblanks=0
-		if quad.string is not None:
-			#todo: Unicode?
-			strlen=len(quad.string)
-			if(strlen>255):
-				raise SaveError('String too long!')
-			qe+=pack('<3B',3,3,strlen)
-			qe+=quad.string
-			qe+='\0'
-			if strlen%4==0:
-				exblanks=0
-			else:
-				exblanks=4-(strlen%4)
-			qe+=('\0'*exblanks)
-		return (qe,len(qe)-exblanks)
+		return qe
 	def getReferenceCount(self,mainquad):
 		count=0
 		for quad in self.quads:
@@ -190,17 +132,7 @@ class c3dmmFileOut:
 		sorted.sort(self.cmpquad)
 		return sorted
 	def cmpquad(self,a,b):
-		if a.type==b.type:
-			return cmp(a.id,b.id)
-		else:
-			return cmp(a.type,b.type)
-	def find_quad(self,type,id):
-		for quad in self.quads:
-			if (type is not None and quad.type==type) and (id is not None and quad.id==id):
-				return quad
-	def convertFileSources(self):
-		for quad in self.quads:
-			quad.source.make_memory_source()
+		return cmp(a.type,b.type)
 class c3dmmFile:
 	def __init__(self,filename=None,cache=False):
 		self.cache=cache
@@ -224,13 +156,13 @@ class c3dmmFile:
 		self.version=sread(fop,'<HH')
 		marker=sread(fop,'<4B')
 		if not marker in [(1,0,3,3),(1,0,5,5)]:
-			raise LoadError, 'Bad/missing marker at %i',fop.tell()
+			raise LoadError('Bad/missing marker at %i'%fop.tell())
 		self.file_length,self.index_offset=sread(fop,'<2L')
 		self.index_length,dummy=sread(fop,'<2L')
 		fop.seek(self.index_offset)
 		marker=sread(fop,'<4B')
 		if not marker in [(1,0,3,3),(1,0,5,5)]:
-			raise LoadError, 'Bad/missing marker at %i',fop.tell()
+			raise LoadError('Bad/missing marker at %i'%fop.tell())
 		self.quad_count,self.quads_length=sread(fop,'<LL')
 		unk=sread(fop,'<ll')
 		if unk!=(-1,20):
@@ -290,7 +222,7 @@ class c3dmmFile:
 						ustr+=unichr(char)
 					cquad['string']=ustr
 				else:
-					raise LoadError,'Expected string marker 3,3 or 5,5 but got %i,%i!' % marker
+					raise LoadError('Expected string marker 3,3 or 5,5 but got %i,%i!' %marker)
 			else:
 				cquad['string']=None
 			self.quads.append(cquad)
@@ -334,20 +266,15 @@ class c3dmmFile:
 					self.dump_quad(subquad,level+1)
 			else:
 				print '%s* %s !' % (sep,ref['type'])
-	def shift_quads(self,amount):
-		for quad in self.quads:
-			quad['source'].shiftOffset(amount)
+
 	def find_quad(self,type,id):
 		for quad in self.quads:
 			if quad['type']==type and quad['id']==id:
 				return quad
-	def getMajorQuads(self):
-		out=[]
-		for quad in self.quads:
-			if quad['mode'] in (2,6):
-				out.append(quad)
-		return out
-	def convertFileSources(self):
-		for quad in self.quads:
-			quad['source']=quad['source'].make_memory_source()
 
+if __name__=='__main__':
+	import sys
+	f=c3dmmFile(sys.argv[1])
+	f.dump()
+	for quad in f.quads:
+		print quad['type'],quad.isCompressed()
