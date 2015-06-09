@@ -9,44 +9,66 @@
 #You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 import os
-class Source:
+
+class Source(object):
+	
 	def get_length(self):
 		return 0
+	
 	def get(self):
 		return ''
+	
 	def write(self,fop):
 		pass
+
+
 class MemorySource(Source):
+	
 	def __init__(self,data):
 		self.data=data
+	
 	def get_length(self):
 		return len(self.data)
+	
 	def get(self):
 		return self.data
+	
 	def write(self,fop):
 		fop.write(self.data)
+
+
 class CachedMemorySource(Source):
+	
 	def __init__(self,data):
 		self.file=os.tmpfile()
 		self.length=data
 		self.file.write(data)
+	
 	def get(self):
 		self.file.seek(0)
 		return self.file.read()
+	
 	def write(self,fop):
 		fop.write(self.get())
+
+
 class FileSource(Source):
+	
 	def __init__(self,filename,offset,length):
 		self.filename=filename
 		self.offset=offset
 		self.length=length
+	
 	def get_length(self):
 		return self.length
+	
 	def get(self):
-		fop=open(self.filename,'rb')
-		fop.seek(self.offset)
-		return fop.read(self.length)
+		with open(self.filename,'rb') as f:
+			fop.seek(self.offset)
+			return fop.read(self.length)
+	
 	def write(self,fop):
 		fop.write(self.get())
+	
 	def make_memory_source(self):
 		return MemorySource(self.get())

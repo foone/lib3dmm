@@ -12,6 +12,7 @@ from struct import unpack,calcsize,pack
 from error import LoadError,SaveError
 from sources import *
 import cStringIO
+
 def sread(file,struct):
 	size=calcsize(struct)
 #	print 'Reading %s:%i' % (struct,size)
@@ -21,9 +22,11 @@ def sread(file,struct):
 	else:
 		return res
 
-class Quad:
+
+class Quad(object):
 	MAIN_QUAD_FLAG = 2
 	COMPRESSED_FLAG = 4
+
 	def __init__(self,type,id=0,mode=0,string=0):
 		self.type=type
 		self.id=id
@@ -31,35 +34,47 @@ class Quad:
 		self.mode=mode
 		self.source=MemorySource('')
 		self.references=[]
+
 	def setData(self,string):
 		self.source=MemorySource(string)
+
 	def addReference(self,otherquad,refid):
 		self.references.append((refid,otherquad))
+
 	def getLength(self):
 		return self.source.get_length()
+
 	def write(self,fop):
 		self.source.write(fop)
+
 	def getNumReferences(self):
 		return len(self.references)
+
 	def isCompressed(self):
 		return bool(self.mode&Quad.COMPRESSED_FLAG)
 
-class c3dmmFileOut:
+
+class c3dmmFileOut(object):
+
 	def __init__(self):
 		self.quads=[]
 		self.sig='CHMP'
 		self.unks=(5,4)
 		self.magic=(1,0,3,3)
+
 	def addQuad(self,quad):
 		self.quads.append(quad)
+
 	def getData(self):
 		strio=cStringIO.StringIO()
 		self.saveToFile(strio)
 		return strio.getvalue()
+
 	def save(self,filename):
 		fop=open(filename,'wb')
 		self.saveToFile(fop)
 		fop.close()
+
 	def saveToFile(self,fop):
 		offset=128
 		quadaddys=[]
@@ -85,9 +100,11 @@ class c3dmmFileOut:
 		for quad in sortedquads:
 			quad.write(fop)
 		fop.write(index)
+
 	def makeHeader(self,length,indexoffset,indexlength):
 		header=pack('<8s 2H 4B 4L 96s', 'CHN2' + self.sig[::-1],self.unks[0],self.unks[1],self.magic[0],self.magic[1],self.magic[2],self.magic[3],length,indexoffset,indexlength,length,'')
 		return header
+
 	def makeIndex(self,quadaddys):
 		index=''
 		quadentries=[]
@@ -113,6 +130,7 @@ class c3dmmFileOut:
 			postindex+=pack('<2L',offset,len(quadentry))
 		index+=postindex
 		return index
+
 	def makeQuadEntry(self,offset,quad):
 		qe=pack('<4s 2L B',quad.type[::-1],quad.id,offset,quad.mode)
 		qe+=pack('<L',quad.getLength())[0:3] # 24 bit numbers ROCK MY COCK OFF
@@ -120,6 +138,7 @@ class c3dmmFileOut:
 		for refid,oquad in quad.references:
 			qe+=pack('<4s 2L',oquad.type[::-1],oquad.id,refid)
 		return qe
+
 	def getReferenceCount(self,mainquad):
 		count=0
 		for quad in self.quads:
@@ -127,19 +146,25 @@ class c3dmmFileOut:
 				if oquad is mainquad:
 					count+=1
 		return count
+
 	def makeSortedQuads(self):
 		sorted=self.quads[:]
 		sorted.sort(self.cmpquad)
 		return sorted
+
 	def cmpquad(self,a,b):
 		return cmp(a.type,b.type)
-class c3dmmFile:
+
+
+class c3dmmFile(object):
+
 	def __init__(self,filename=None,cache=False):
 		self.cache=cache
 		if filename is not None:
 			self.load(filename)
 		else:
 			self.reset()
+
 	def reset(self):
 		self.filename=None
 		self.id='        '
@@ -148,6 +173,7 @@ class c3dmmFile:
 		self.index_length=self.quad_count=self.quads_length=self_quad_start=0
 		self.quad_index=[]
 		self.quads=[]
+
 	def load(self,filename):
 		self.reset()
 		self.filename=filename
@@ -170,11 +196,13 @@ class c3dmmFile:
 		self.quad_start=self.index_offset+20
 		self.load_quad_index(fop)
 		self.load_quads(fop)
+
 	def load_quad_index(self,fop):
 		fop.seek(self.quad_start+self.quads_length)
 		self.quad_index=[]
 		for i in range(self.quad_count):
 			self.quad_index.append(sread(fop,'<2L')) 
+
 	def load_quads(self,fop):
 		self.quads=[]
 		for i in range(self.quad_count):
@@ -227,11 +255,13 @@ class c3dmmFile:
 				cquad['string']=None
 			self.quads.append(cquad)
 		pass
+
 	def save(self,filename):
 		data_size=0
 		for quad in self.quads:
 			data_size+=quad['source'].get_length()
 		print data_size
+
 	def dump(self):
 		print 'id:',self.id
 		print 'version:',self.version
@@ -251,6 +281,7 @@ class c3dmmFile:
 				else:
 					print '+ %s %s' % (quad['type'],after)
 					self.dump_quad(quad)
+
 	def dump_quad(self,quad,level=1):
 		sep='  ' * level
 		for ref in quad['references']:
